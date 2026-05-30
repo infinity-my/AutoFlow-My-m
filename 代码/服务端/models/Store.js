@@ -6,7 +6,11 @@ module.exports = (sequelize, DataTypes) => {
     phone: { type: DataTypes.TEXT },
     business_hours: { type: DataTypes.TEXT },
     images: { type: DataTypes.TEXT },
-    status: { type: DataTypes.INTEGER, defaultValue: 1 }
+    status: { type: DataTypes.INTEGER, defaultValue: 1 },
+    latitude: { type: DataTypes.FLOAT, allowNull: true },
+    longitude: { type: DataTypes.FLOAT, allowNull: true },
+    rating: { type: DataTypes.FLOAT, allowNull: true, defaultValue: 4.8 },
+    reviews: { type: DataTypes.INTEGER, allowNull: true, defaultValue: 0 }
   }, {
     tableName: 'stores'
   });

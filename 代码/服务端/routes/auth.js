@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
+const bcrypt = require('bcryptjs');
 const db = require('../models');
 const config = require('../config');
 const auth = require('../middleware/auth');
@@ -39,7 +40,6 @@ router.post('/login', async (req, res, next) => {
       return res.json({ code: 200, message: 'success', data: { token: generateToken(user), userInfo: user } });
     }
 
-    const mockOpenid = 'mock_' + (nickname || 'user') + '_' + Date.now();
     let user = await db.User.findOne({ where: { openid: 'mock_default' } });
     if (!user) {
       user = await db.User.create({
@@ -70,9 +70,9 @@ router.put('/profile', auth, async (req, res, next) => {
   try {
     const user = await db.User.findByPk(req.user.id);
     if (!user) return res.status(404).json({ code: 404, message: '用户不存在', data: null });
-    
+
     const { nickname, avatar_url, phone, gender, birthday, email } = req.body;
-    
+
     const updateData = {};
     if (nickname !== undefined) updateData.nickname = nickname;
     if (avatar_url !== undefined) updateData.avatar_url = avatar_url;
@@ -80,13 +80,13 @@ router.put('/profile', auth, async (req, res, next) => {
     if (gender !== undefined) updateData.gender = gender;
     if (birthday !== undefined) updateData.birthday = birthday;
     if (email !== undefined) updateData.email = email;
-    
+
     await user.update(updateData);
-    
+
     const updatedUser = await db.User.findByPk(req.user.id, {
       include: [{ model: db.MemberLevel, as: 'levelInfo' }]
     });
-    
+
     res.json({ code: 200, message: 'success', data: updatedUser });
   } catch (err) {
     next(err);
@@ -106,7 +106,7 @@ router.post('/phone', auth, async (req, res, next) => {
 
 router.post('/register', async (req, res, next) => {
   try {
-    const { phone, password } = req.body;
+    const { phone, password, current_token } = req.body;
 
     if (!phone || !password) {
       return res.json({ code: 400, message: '手机号和密码不能为空', data: null });
@@ -117,13 +117,32 @@ router.post('/register', async (req, res, next) => {
       return res.json({ code: 400, message: '该手机号已注册', data: null });
     }
 
-    const user = await db.User.create({
-      phone,
-      password,
-      nickname: '咖啡爱好者'
-    });
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-    res.json({ code: 200, message: '注册成功', data: { token: generateToken(user), userInfo: user } });
+    let currentUser = null;
+    if (current_token) {
+      try {
+        const decoded = jwt.verify(current_token, config.jwt.secret);
+        currentUser = await db.User.findByPk(decoded.id);
+      } catch (e) {
+        currentUser = null;
+      }
+    }
+
+    if (currentUser && !currentUser.phone) {
+      await currentUser.update({
+        phone,
+        password: hashedPassword
+      });
+      res.json({ code: 200, message: '注册成功', data: { token: generateToken(currentUser), userInfo: currentUser } });
+    } else {
+      const user = await db.User.create({
+        phone,
+        password: hashedPassword,
+        nickname: '咖啡爱好者'
+      });
+      res.json({ code: 200, message: '注册成功', data: { token: generateToken(user), userInfo: user } });
+    }
   } catch (err) {
     next(err);
   }
@@ -142,11 +161,48 @@ router.post('/phone-login', async (req, res, next) => {
       return res.json({ code: 400, message: '用户不存在，请先注册', data: null });
     }
 
-    if (user.password !== password) {
+    if (!user.password) {
+      return res.json({ code: 400, message: '该账号未设置密码，请使用微信登录', data: null });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
       return res.json({ code: 400, message: '密码错误', data: null });
     }
 
     res.json({ code: 200, message: '登录成功', data: { token: generateToken(user), userInfo: user } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/sync-cart', auth, async (req, res, next) => {
+  try {
+    const { items } = req.body;
+    if (!items || !Array.isArray(items)) {
+      return res.json({ code: 400, message: '无效的购物车数据', data: null });
+    }
+
+    for (const item of items) {
+      const product = await db.Product.findByPk(item.product_id);
+      if (!product) continue;
+
+      const existing = await db.Cart.findOne({
+        where: { user_id: req.user.id, product_id: item.product_id, specs: item.specs || null }
+      });
+      if (existing) {
+        await existing.update({ quantity: existing.quantity + (item.quantity || 1) });
+      } else {
+        await db.Cart.create({
+          user_id: req.user.id,
+          product_id: item.product_id,
+          specs: item.specs || null,
+          quantity: item.quantity || 1
+        });
+      }
+    }
+
+    res.json({ code: 200, message: 'success', data: null });
   } catch (err) {
     next(err);
   }

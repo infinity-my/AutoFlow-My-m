@@ -133,7 +133,7 @@ router.post('/addresses', auth, async (req, res, next) => {
       province: province || '',
       city: city || '',
       district: district || '',
-      detail,
+      detail: detail,
       tag: tag || '家',
       isDefault: isDefault ? 1 : 0
     });
